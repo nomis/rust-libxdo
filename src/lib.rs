@@ -4,9 +4,8 @@
 
 extern crate libxdo_sys as sys;
 
-use std::ffi::{CString, NulError};
-use std::convert::From;
 use std::error::Error;
+use std::ffi::{CString, NulError};
 use std::fmt;
 
 /// The main handle type which provides access to the various operations.
@@ -27,9 +26,11 @@ impl fmt::Display for CreationError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             CreationError::Nul(ref err) => {
-                write!(f,
-                       "Failed to create XDo instance: Nul byte in argument: {}",
-                       err)
+                write!(
+                    f,
+                    "Failed to create XDo instance: Nul byte in argument: {}",
+                    err
+                )
             }
             CreationError::Ffi => write!(f, "Libxdo failed to create an instance."),
         }
@@ -43,7 +44,7 @@ impl Error for CreationError {
             CreationError::Ffi => "libxdo creation error: Ffi error",
         }
     }
-    fn cause(&self) -> Option<&Error> {
+    fn cause(&self) -> Option<&dyn Error> {
         match *self {
             CreationError::Nul(ref err) => Some(err),
             CreationError::Ffi => None,
@@ -84,7 +85,7 @@ impl Error for OpError {
             OpError::Ffi(_) => "xdo operation failure: Ffi error",
         }
     }
-    fn cause(&self) -> Option<&Error> {
+    fn cause(&self) -> Option<&dyn Error> {
         match *self {
             OpError::Nul(ref err) => Some(err),
             OpError::Ffi(_) => None,
@@ -135,7 +136,7 @@ impl XDo {
         if handle.is_null() {
             return Err(CreationError::Ffi);
         }
-        Ok(XDo { handle: handle })
+        Ok(XDo { handle })
     }
     /// Moves the mouse to the specified position.
     pub fn move_mouse(&self, x: i32, y: i32, screen: i32) -> OpResult {
@@ -147,7 +148,11 @@ impl XDo {
     }
     /// Does a mouse click.
     pub fn click(&self, button: i32) -> OpResult {
-        xdo!(sys::xdo_click_window(self.handle, sys::CURRENTWINDOW, button))
+        xdo!(sys::xdo_click_window(
+            self.handle,
+            sys::CURRENTWINDOW,
+            button
+        ))
     }
     /// Holds a mouse button down.
     pub fn mouse_down(&self, button: i32) -> OpResult {
@@ -160,34 +165,42 @@ impl XDo {
     /// Types the specified text.
     pub fn enter_text(&self, text: &str, delay_microsecs: u32) -> OpResult {
         let string = CString::new(text)?;
-        xdo!(sys::xdo_enter_text_window(self.handle,
-                                        sys::CURRENTWINDOW,
-                                        string.as_ptr(),
-                                        delay_microsecs))
+        xdo!(sys::xdo_enter_text_window(
+            self.handle,
+            sys::CURRENTWINDOW,
+            string.as_ptr(),
+            delay_microsecs
+        ))
     }
     /// Does the specified key sequence.
     pub fn send_keysequence(&self, sequence: &str, delay_microsecs: u32) -> OpResult {
         let string = CString::new(sequence)?;
-        xdo!(sys::xdo_send_keysequence_window(self.handle,
-                                              sys::CURRENTWINDOW,
-                                              string.as_ptr(),
-                                              delay_microsecs))
+        xdo!(sys::xdo_send_keysequence_window(
+            self.handle,
+            sys::CURRENTWINDOW,
+            string.as_ptr(),
+            delay_microsecs
+        ))
     }
     /// Releases the specified key sequence.
     pub fn send_keysequence_up(&self, sequence: &str, delay_microsecs: u32) -> OpResult {
         let string = CString::new(sequence)?;
-        xdo!(sys::xdo_send_keysequence_window_up(self.handle,
-                                                 sys::CURRENTWINDOW,
-                                                 string.as_ptr(),
-                                                 delay_microsecs))
+        xdo!(sys::xdo_send_keysequence_window_up(
+            self.handle,
+            sys::CURRENTWINDOW,
+            string.as_ptr(),
+            delay_microsecs
+        ))
     }
     /// Presses the specified key sequence down.
     pub fn send_keysequence_down(&self, sequence: &str, delay_microsecs: u32) -> OpResult {
         let string = CString::new(sequence)?;
-        xdo!(sys::xdo_send_keysequence_window_down(self.handle,
-                                                   sys::CURRENTWINDOW,
-                                                   string.as_ptr(),
-                                                   delay_microsecs))
+        xdo!(sys::xdo_send_keysequence_window_down(
+            self.handle,
+            sys::CURRENTWINDOW,
+            string.as_ptr(),
+            delay_microsecs
+        ))
     }
 }
 
