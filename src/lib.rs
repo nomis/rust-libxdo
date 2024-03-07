@@ -7,10 +7,11 @@ extern crate libxdo_sys as sys;
 use std::error::Error;
 use std::ffi::{CString, NulError};
 use std::fmt;
+use std::ptr::NonNull;
 
 /// The main handle type which provides access to the various operations.
 pub struct XDo {
-    handle: *mut sys::xdo_t,
+    handle: NonNull<sys::xdo_t>,
 }
 
 /// An error that can happen when trying to create an `XDo` instance.
@@ -133,40 +134,48 @@ impl XDo {
             None => ::std::ptr::null(),
         };
         let handle = unsafe { sys::xdo_new(display) };
-        if handle.is_null() {
-            return Err(CreationError::Ffi);
+        match NonNull::new(handle) {
+            Some(handle) => Ok(Self { handle }),
+            None => Err(CreationError::Ffi),
         }
-        Ok(XDo { handle })
     }
     /// Moves the mouse to the specified position.
     pub fn move_mouse(&self, x: i32, y: i32, screen: i32) -> OpResult {
-        xdo!(sys::xdo_move_mouse(self.handle, x, y, screen))
+        xdo!(sys::xdo_move_mouse(self.handle.as_ptr(), x, y, screen))
     }
     /// Moves the mouse relative to the current position.
     pub fn move_mouse_relative(&self, x: i32, y: i32) -> OpResult {
-        xdo!(sys::xdo_move_mouse_relative(self.handle, x, y))
+        xdo!(sys::xdo_move_mouse_relative(self.handle.as_ptr(), x, y))
     }
     /// Does a mouse click.
     pub fn click(&self, button: i32) -> OpResult {
         xdo!(sys::xdo_click_window(
-            self.handle,
+            self.handle.as_ptr(),
             sys::CURRENTWINDOW,
             button
         ))
     }
     /// Holds a mouse button down.
     pub fn mouse_down(&self, button: i32) -> OpResult {
-        xdo!(sys::xdo_mouse_down(self.handle, sys::CURRENTWINDOW, button))
+        xdo!(sys::xdo_mouse_down(
+            self.handle.as_ptr(),
+            sys::CURRENTWINDOW,
+            button
+        ))
     }
     /// Releases a mouse button.
     pub fn mouse_up(&self, button: i32) -> OpResult {
-        xdo!(sys::xdo_mouse_up(self.handle, sys::CURRENTWINDOW, button))
+        xdo!(sys::xdo_mouse_up(
+            self.handle.as_ptr(),
+            sys::CURRENTWINDOW,
+            button
+        ))
     }
     /// Types the specified text.
     pub fn enter_text(&self, text: &str, delay_microsecs: u32) -> OpResult {
         let string = CString::new(text)?;
         xdo!(sys::xdo_enter_text_window(
-            self.handle,
+            self.handle.as_ptr(),
             sys::CURRENTWINDOW,
             string.as_ptr(),
             delay_microsecs
@@ -176,7 +185,7 @@ impl XDo {
     pub fn send_keysequence(&self, sequence: &str, delay_microsecs: u32) -> OpResult {
         let string = CString::new(sequence)?;
         xdo!(sys::xdo_send_keysequence_window(
-            self.handle,
+            self.handle.as_ptr(),
             sys::CURRENTWINDOW,
             string.as_ptr(),
             delay_microsecs
@@ -186,7 +195,7 @@ impl XDo {
     pub fn send_keysequence_up(&self, sequence: &str, delay_microsecs: u32) -> OpResult {
         let string = CString::new(sequence)?;
         xdo!(sys::xdo_send_keysequence_window_up(
-            self.handle,
+            self.handle.as_ptr(),
             sys::CURRENTWINDOW,
             string.as_ptr(),
             delay_microsecs
@@ -196,7 +205,7 @@ impl XDo {
     pub fn send_keysequence_down(&self, sequence: &str, delay_microsecs: u32) -> OpResult {
         let string = CString::new(sequence)?;
         xdo!(sys::xdo_send_keysequence_window_down(
-            self.handle,
+            self.handle.as_ptr(),
             sys::CURRENTWINDOW,
             string.as_ptr(),
             delay_microsecs
@@ -207,7 +216,7 @@ impl XDo {
 impl Drop for XDo {
     fn drop(&mut self) {
         unsafe {
-            sys::xdo_free(self.handle);
+            sys::xdo_free(self.handle.as_ptr());
         }
     }
 }
