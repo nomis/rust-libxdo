@@ -1,6 +1,7 @@
 //! High level bindings to [libxdo](http://www.semicomplete.com/files/xdotool/docs/html/)
 
-#![warn(missing_docs)]
+#![warn(missing_docs, clippy::pedantic)]
+#![expect(clippy::missing_errors_doc)]
 
 extern crate libxdo_sys as sys;
 
@@ -29,8 +30,7 @@ impl fmt::Display for CreationError {
             CreationError::Nul(ref err) => {
                 write!(
                     f,
-                    "Failed to create XDo instance: Nul byte in argument: {}",
-                    err
+                    "Failed to create XDo instance: Nul byte in argument: {err}",
                 )
             }
             CreationError::Ffi => write!(f, "Libxdo failed to create an instance."),
@@ -72,9 +72,9 @@ impl fmt::Display for OpError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             OpError::Nul(ref err) => {
-                write!(f, "Xdo operation failed: Nul byte in argument: {}", err)
+                write!(f, "Xdo operation failed: Nul byte in argument: {err}")
             }
-            OpError::Ffi(code) => write!(f, "Xdo operation failed. Error code {}.", code),
+            OpError::Ffi(code) => write!(f, "Xdo operation failed. Error code {code}."),
         }
     }
 }
