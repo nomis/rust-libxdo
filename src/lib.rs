@@ -15,6 +15,9 @@ pub struct XDo {
     handle: NonNull<sys::xdo_t>,
 }
 
+unsafe impl Send for XDo {}
+unsafe impl Sync for XDo {}
+
 /// An error that can happen when trying to create an `XDo` instance.
 #[derive(Debug)]
 pub enum CreationError {
