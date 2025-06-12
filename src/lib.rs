@@ -6,9 +6,12 @@
 extern crate libxdo_sys as sys;
 
 use std::error::Error;
-use std::ffi::{CString, NulError};
+use std::ffi::{CStr, CString, NulError};
 use std::fmt;
 use std::ptr::NonNull;
+use std::num::TryFromIntError;
+
+use versions::Versioning;
 
 /// The main handle type which provides access to the various operations.
 pub struct XDo {
@@ -18,6 +21,9 @@ pub struct XDo {
 unsafe impl Send for XDo {}
 unsafe impl Sync for XDo {}
 
+#[allow(missing_docs)]
+pub type Window = sys::Window;
+
 /// An error that can happen when trying to create an `XDo` instance.
 #[derive(Debug)]
 pub enum CreationError {
@@ -25,6 +31,48 @@ pub enum CreationError {
     Nul(NulError),
     /// Libxdo failed to create an instance. No further information available.
     Ffi,
+}
+
+/// Search mode
+#[derive(Debug, Default)]
+pub enum SearchRequire {
+    #[default]
+    /// Any success will keep the window in search results
+    Any,
+    /// Any failure will skip the window
+    All,
+}
+
+/// Search parameters
+#[derive(Debug, Default)]
+pub struct Search {
+    /// pattern to test against a window title
+    pub title: Option<String>,
+    /// pattern to test against a window class
+    pub window_class: Option<String>,
+    /// pattern to test against a window class name
+    pub window_class_name: Option<String>,
+    /// pattern to test against a window name
+    pub window_name: Option<String>,
+    /// pattern to test against a window role
+    pub window_role: Option<String>,
+    /// window pid (From window atom _NET_WM_PID)
+    pub pid: Option<i32>,
+    /// depth of search. 1 means only toplevel windows
+    pub max_depth: Option<isize>,
+    /// boolean; set true to search only visible windows
+    pub only_visible: bool,
+    /// what screen to search, if any. If none given, search all screens 
+    pub screen: Option<i32>,
+
+    /// Should the tests be 'and' or 'or' ? If 'and', any failure will skip
+    /// the window. If 'or', any success will keep the window in search results.
+    pub require: SearchRequire,
+    
+    /// What desktop to search, if any. If none given, search all screens.
+    pub desktop: Option<usize>,
+    /// How many results to return? If 0, return all.
+    pub limit: usize,
 }
 
 impl fmt::Display for CreationError {
@@ -67,6 +115,10 @@ impl From<NulError> for CreationError {
 pub enum OpError {
     /// The provided string parameter had an interior null byte in it.
     Nul(NulError),
+    /// Integer conversion error.
+    Int(TryFromIntError),
+    /// Library version not supported.
+    Ver(),
     /// Libxdo failed, returning an error code.
     Ffi(i32),
 }
@@ -77,6 +129,12 @@ impl fmt::Display for OpError {
             OpError::Nul(ref err) => {
                 write!(f, "Xdo operation failed: Nul byte in argument: {err}")
             }
+            OpError::Int(ref err) => {
+                write!(f, "Xdo operation failed: Integer conversion error: {err}")
+            }
+            OpError::Ver() => {
+                write!(f, "Xdo operation failed: Library version not supported")
+            }
             OpError::Ffi(code) => write!(f, "Xdo operation failed. Error code {code}."),
         }
     }
@@ -86,13 +144,16 @@ impl Error for OpError {
     fn description(&self) -> &str {
         match *self {
             OpError::Nul(_) => "xdo operation failure: Nul byte in argument",
+            OpError::Int(_) => "xdo operation failure: Integer conversion error",
+            OpError::Ver() => "xdo operation failure: Library version not supported",
             OpError::Ffi(_) => "xdo operation failure: Ffi error",
         }
     }
     fn cause(&self) -> Option<&dyn Error> {
         match *self {
             OpError::Nul(ref err) => Some(err),
-            OpError::Ffi(_) => None,
+            OpError::Int(ref err) => Some(err),
+            OpError::Ver() | OpError::Ffi(_) => None,
         }
     }
 }
@@ -100,6 +161,12 @@ impl Error for OpError {
 impl From<NulError> for OpError {
     fn from(err: NulError) -> Self {
         OpError::Nul(err)
+    }
+}
+
+impl From<TryFromIntError> for OpError {
+    fn from(err: TryFromIntError) -> OpError {
+        OpError::Int(err)
     }
 }
 
@@ -185,11 +252,11 @@ impl XDo {
         ))
     }
     /// Does the specified key sequence.
-    pub fn send_keysequence(&self, sequence: &str, delay_microsecs: u32) -> OpResult {
+    pub fn send_keysequence(&self, window: Option<Window>, sequence: &str, delay_microsecs: u32) -> OpResult {
         let string = CString::new(sequence)?;
         xdo!(sys::xdo_send_keysequence_window(
             self.handle.as_ptr(),
-            sys::CURRENTWINDOW,
+            window.unwrap_or(sys::CURRENTWINDOW),
             string.as_ptr(),
             delay_microsecs
         ))
@@ -213,6 +280,91 @@ impl XDo {
             string.as_ptr(),
             delay_microsecs
         ))
+    }
+    /// Searches for windows.
+    pub fn search_windows(&self, search: Search) -> Result<Vec<Window>, OpError> {
+        let mut searchmask = 0;
+
+        if search.title.is_some() { searchmask |= sys::SEARCH_TITLE; }
+        if search.window_class.is_some() { searchmask |= sys::SEARCH_CLASS; }
+        if search.window_class_name.is_some() { searchmask |= sys::SEARCH_CLASSNAME; }
+        if search.window_name.is_some() { searchmask |= sys::SEARCH_NAME; }
+        if search.window_role.is_some() { searchmask |= sys::SEARCH_ROLE; }
+        if search.pid.is_some() { searchmask |= sys::SEARCH_PID; }
+        if search.only_visible { searchmask |= sys::SEARCH_ONLYVISIBLE; }
+        if search.screen.is_some() { searchmask |= sys::SEARCH_SCREEN; }
+        if search.desktop.is_some() { searchmask |= sys::SEARCH_DESKTOP; }
+
+        let searchmask = searchmask;
+        let c_title = CString::new(search.title.unwrap_or_default())?;
+        let c_winclass = CString::new(search.window_class.unwrap_or_default())?;
+        let c_winclassname = CString::new(search.window_class_name.unwrap_or_default())?;
+        let c_winname = CString::new(search.window_name.unwrap_or_default())?;
+        let c_winrole = CString::new(search.window_role.unwrap_or_default())?;
+        let require = match search.require {
+            SearchRequire::All => sys::SEARCH_ALL,
+            SearchRequire::Any => sys::SEARCH_ANY,
+        };
+
+        let version = Versioning::new(unsafe {
+            CStr::from_ptr(sys::xdo_version()).to_str().map_err(|_| OpError::Ver())?
+        }).ok_or(OpError::Ver())?;
+
+        let c_search = if version >= Versioning::new("3.20210804.1").ok_or(OpError::Ver())? {
+            sys::Union_xdo_search {
+                v3_20210804_1: sys::Struct_xdo_search_3_20210804_1 {
+                    title: c_title.as_ptr(),
+                    winclass: c_winclass.as_ptr(),
+                    winclassname: c_winclassname.as_ptr(),
+                    winname: c_winname.as_ptr(),
+                    winrole: c_winrole.as_ptr(),
+                    pid: search.pid.unwrap_or_default(),
+                    max_depth: search.max_depth.unwrap_or(-1).try_into()?,
+                    only_visible: search.only_visible.into(),
+                    screen: search.screen.unwrap_or_default(),
+                    require,
+                    searchmask,
+                    desktop: search.desktop.unwrap_or_default().try_into()?,
+                    limit: search.limit.try_into()?,
+                }
+            }
+        } else if version >= Versioning::new("3.20150503.1").ok_or(OpError::Ver())? {
+            if searchmask & sys::SEARCH_ROLE != 0 {
+                Err(OpError::Ver())?;
+            }
+
+            sys::Union_xdo_search {
+                v3_20150503_1: sys::Struct_xdo_search_3_20150503_1 {
+                    title: c_title.as_ptr(),
+                    winclass: c_winclass.as_ptr(),
+                    winclassname: c_winclassname.as_ptr(),
+                    winname: c_winname.as_ptr(),
+                    pid: search.pid.unwrap_or_default(),
+                    max_depth: search.max_depth.unwrap_or(-1).try_into()?,
+                    only_visible: search.only_visible.into(),
+                    screen: search.screen.unwrap_or_default(),
+                    require,
+                    searchmask,
+                    desktop: search.desktop.unwrap_or_default().try_into()?,
+                    limit: search.limit.try_into()?,
+                }
+            }
+        } else {
+            Err(OpError::Ver())?
+        };
+        let mut windowlist_ret: *mut sys::Window = std::ptr::null_mut();
+        let mut nwindows_ret: sys::c_uint = 0;
+
+        xdo!(sys::xdo_search_windows(
+            self.handle.as_ptr(),
+            &raw const c_search,
+            &raw mut windowlist_ret,
+            &raw mut nwindows_ret,
+        ))?;
+
+        Ok(unsafe {
+            std::slice::from_raw_parts(windowlist_ret,
+                nwindows_ret.try_into().unwrap_or(usize::MAX)) }.to_vec())
     }
 }
 
