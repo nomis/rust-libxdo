@@ -1,6 +1,6 @@
 [package]
 name = "libxdo"
-version = "0.6.0-sa1"
+version = "0.6.0-sa2"
 authors = ["Mika Attila <radiantstatue@gmail.com>"]
 license = "MIT"
 description = "Bindings to libxdo"
@@ -11,5 +11,5 @@ keywords = ["X11", "automation", "xdotool", "libxdo", "xdo"]
 edition = "2024"
 
 [dependencies]
-libxdo-sys = { version = "0.11.0-sa1", git = "https://github.com/nomis/rust-libxdo-sys", rev = "0.11.0-sa1" }
+libxdo-sys = { version = "0.11.0-sa2", git = "https://github.com/nomis/rust-libxdo-sys", rev = "0.11.0-sa2" }
 versions = "7.0.0"

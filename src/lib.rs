@@ -16,6 +16,7 @@ use versions::Versioning;
 /// The main handle type which provides access to the various operations.
 pub struct XDo {
     handle: NonNull<sys::xdo_t>,
+    version: sys::Version,
 }
 
 unsafe impl Send for XDo {}
@@ -29,6 +30,8 @@ pub type Window = sys::Window;
 pub enum CreationError {
     /// The provided string parameter had an interior null byte in it.
     Nul(NulError),
+    /// Library version not supported.
+    Ver,
     /// Libxdo failed to create an instance. No further information available.
     Ffi,
 }
@@ -84,6 +87,9 @@ impl fmt::Display for CreationError {
                     "Failed to create XDo instance: Nul byte in argument: {err}",
                 )
             }
+            CreationError::Ver => {
+                write!(f, "Failed to create XDo instance: Library version not supported")
+            }
             CreationError::Ffi => write!(f, "Libxdo failed to create an instance."),
         }
     }
@@ -93,13 +99,14 @@ impl Error for CreationError {
     fn description(&self) -> &str {
         match *self {
             CreationError::Nul(_) => "libxdo creation error: Nul byte in argument",
+            CreationError::Ver => "libxdo creation error: Library version not supported",
             CreationError::Ffi => "libxdo creation error: Ffi error",
         }
     }
     fn cause(&self) -> Option<&dyn Error> {
         match *self {
             CreationError::Nul(ref err) => Some(err),
-            CreationError::Ffi => None,
+            CreationError::Ver | CreationError::Ffi => None,
         }
     }
 }
@@ -118,7 +125,7 @@ pub enum OpError {
     /// Integer conversion error.
     Int(TryFromIntError),
     /// Library version not supported.
-    Ver(),
+    Ver,
     /// Libxdo failed, returning an error code.
     Ffi(i32),
 }
@@ -132,7 +139,7 @@ impl fmt::Display for OpError {
             OpError::Int(ref err) => {
                 write!(f, "Xdo operation failed: Integer conversion error: {err}")
             }
-            OpError::Ver() => {
+            OpError::Ver => {
                 write!(f, "Xdo operation failed: Library version not supported")
             }
             OpError::Ffi(code) => write!(f, "Xdo operation failed. Error code {code}."),
@@ -145,7 +152,7 @@ impl Error for OpError {
         match *self {
             OpError::Nul(_) => "xdo operation failure: Nul byte in argument",
             OpError::Int(_) => "xdo operation failure: Integer conversion error",
-            OpError::Ver() => "xdo operation failure: Library version not supported",
+            OpError::Ver => "xdo operation failure: Library version not supported",
             OpError::Ffi(_) => "xdo operation failure: Ffi error",
         }
     }
@@ -153,7 +160,7 @@ impl Error for OpError {
         match *self {
             OpError::Nul(ref err) => Some(err),
             OpError::Int(ref err) => Some(err),
-            OpError::Ver() | OpError::Ffi(_) => None,
+            OpError::Ver | OpError::Ffi(_) => None,
         }
     }
 }
@@ -195,6 +202,18 @@ impl XDo {
     ///
     /// Returns a new `XDo` instance, or a `CreationError` on error.
     pub fn new(display: Option<&str>) -> Result<XDo, CreationError> {
+        let version = Versioning::new(unsafe {
+            CStr::from_ptr(sys::xdo_version()).to_str().map_err(|_| CreationError::Ver)?
+        }).ok_or(CreationError::Ver)?;
+
+        let version = if version >= Versioning::new("3.20210804.1").ok_or(CreationError::Ver)? {
+            sys::Version::v3_20210804_1
+        } else if version >= Versioning::new("3.20150503.1").ok_or(CreationError::Ver)? {
+            sys::Version::v3_20150503_1
+        } else {
+            Err(CreationError::Ver)?
+        };
+
         let c_string;
         let display = match display {
             Some(display) => {
@@ -205,7 +224,7 @@ impl XDo {
         };
         let handle = unsafe { sys::xdo_new(display) };
         match NonNull::new(handle) {
-            Some(handle) => Ok(Self { handle }),
+            Some(handle) => Ok(Self { handle, version }),
             None => Err(CreationError::Ffi),
         }
     }
@@ -306,12 +325,8 @@ impl XDo {
             SearchRequire::Any => sys::SEARCH_ANY,
         };
 
-        let version = Versioning::new(unsafe {
-            CStr::from_ptr(sys::xdo_version()).to_str().map_err(|_| OpError::Ver())?
-        }).ok_or(OpError::Ver())?;
-
-        let c_search = if version >= Versioning::new("3.20210804.1").ok_or(OpError::Ver())? {
-            sys::Union_xdo_search {
+        let c_search = match self.version {
+            sys::Version::v3_20210804_1 => sys::Union_xdo_search {
                 v3_20210804_1: sys::Struct_xdo_search_3_20210804_1 {
                     title: c_title.as_ptr(),
                     winclass: c_winclass.as_ptr(),
@@ -327,30 +342,29 @@ impl XDo {
                     desktop: search.desktop.unwrap_or_default().try_into()?,
                     limit: search.limit.try_into()?,
                 }
-            }
-        } else if version >= Versioning::new("3.20150503.1").ok_or(OpError::Ver())? {
-            if searchmask & sys::SEARCH_ROLE != 0 {
-                Err(OpError::Ver())?;
-            }
+            },
+            sys::Version::v3_20150503_1 => {
+                if searchmask & sys::SEARCH_ROLE != 0 {
+                    Err(OpError::Ver)?;
+                }
 
-            sys::Union_xdo_search {
-                v3_20150503_1: sys::Struct_xdo_search_3_20150503_1 {
-                    title: c_title.as_ptr(),
-                    winclass: c_winclass.as_ptr(),
-                    winclassname: c_winclassname.as_ptr(),
-                    winname: c_winname.as_ptr(),
-                    pid: search.pid.unwrap_or_default(),
-                    max_depth: search.max_depth.unwrap_or(-1).try_into()?,
-                    only_visible: search.only_visible.into(),
-                    screen: search.screen.unwrap_or_default(),
-                    require,
-                    searchmask,
-                    desktop: search.desktop.unwrap_or_default().try_into()?,
-                    limit: search.limit.try_into()?,
+                sys::Union_xdo_search {
+                    v3_20150503_1: sys::Struct_xdo_search_3_20150503_1 {
+                        title: c_title.as_ptr(),
+                        winclass: c_winclass.as_ptr(),
+                        winclassname: c_winclassname.as_ptr(),
+                        winname: c_winname.as_ptr(),
+                        pid: search.pid.unwrap_or_default(),
+                        max_depth: search.max_depth.unwrap_or(-1).try_into()?,
+                        only_visible: search.only_visible.into(),
+                        screen: search.screen.unwrap_or_default(),
+                        require,
+                        searchmask,
+                        desktop: search.desktop.unwrap_or_default().try_into()?,
+                        limit: search.limit.try_into()?,
+                    }
                 }
             }
-        } else {
-            Err(OpError::Ver())?
         };
         let mut windowlist_ret: *mut sys::Window = std::ptr::null_mut();
         let mut nwindows_ret: sys::c_uint = 0;
